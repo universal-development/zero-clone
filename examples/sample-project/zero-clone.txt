@@ -1,0 +1,5 @@
+# You can list base directories (parents of .zero-clone) here.
+# Lines starting with # are comments; blank lines are ignored.
+
+# ./   # The sample-project itself
+

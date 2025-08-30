@@ -1,0 +1,314 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# zero-clone: scan for .zero-clone directories and run rclone syncs
+
+VERSION="0.1.0"
+
+print_usage() {
+  cat <<'USAGE'
+Usage: zero-clone [options] [PATH ...]
+
+Scans for directories containing a `.zero-clone` folder, builds sync jobs
+from `.zero-clone/list.txt`, loads `.zero-clone/env.sh`, prompts for
+confirmation, then runs rclone syncs with logging and concurrency.
+
+Options:
+  -y, --yes              Skip confirmation prompt
+  -j, --jobs N           Default parallel jobs (overridden by per-dir env.sh)
+      --from-file FILE   File with base directories to process (default: zero-clone.txt if present)
+      --dry-run          Pass --dry-run to rclone
+      --no-progress      Do not show rclone progress
+      --version          Print version and exit
+  -h, --help             Show this help and exit
+
+Arguments:
+  PATH ...               Root path(s) to recursively search for `.zero-clone` directories.
+                         Defaults to current directory when not using --from-file.
+
+Per-directory layout:
+  <base>/clone/                  # destination root for synced files
+  <base>/.zero-clone/rclone.conf # rclone config used for that base
+  <base>/.zero-clone/list.txt    # list of sync items: "SRC [DEST]"
+  <base>/.zero-clone/env.sh      # optional, exports env like JOBS, RCLONE_OPTS
+  <base>/.zero-clone/logs/       # logs per sync run
+
+list.txt format:
+  - Each non-empty, non-comment line defines a sync job.
+  - Columns: SRC [DEST]
+      * SRC: rclone source (e.g., remote:path or URL)
+      * DEST: optional relative path under <base>/clone/
+        If omitted, DEST is derived from SRC path's basename.
+
+Examples:
+  zero-clone                      # scan current directory recursively
+  zero-clone ~/Projects           # scan a path recursively
+  zero-clone --from-file repos.txt
+  zero-clone --yes --jobs 4 ~/data
+USAGE
+}
+
+log() { printf "%s\n" "$*"; }
+err() { printf "[ERROR] %s\n" "$*" >&2; }
+
+# Globals set by CLI
+CONFIRM=yes
+DEFAULT_JOBS=${JOBS:-2}
+FROM_FILE=""
+DRY_RUN=""
+PROGRESS="--progress"
+
+while (( $# > 0 )); do
+  case "$1" in
+    -y|--yes) CONFIRM=no; shift ;;
+    -j|--jobs) DEFAULT_JOBS="$2"; shift 2 ;;
+    --from-file) FROM_FILE="$2"; shift 2 ;;
+    --dry-run) DRY_RUN="--dry-run"; shift ;;
+    --no-progress) PROGRESS=""; shift ;;
+    --version) echo "$VERSION"; exit 0 ;;
+    -h|--help) print_usage; exit 0 ;;
+    --) shift; break ;;
+    -*) err "Unknown option: $1"; print_usage; exit 2 ;;
+    *) break ;;
+  esac
+done
+
+if ! command -v rclone >/dev/null 2>&1; then
+  err "rclone not found in PATH. Please install rclone."
+  exit 127
+fi
+
+read_dirs_from_file() {
+  local file="$1"
+  [[ -f "$file" ]] || return 1
+  awk 'NF && $1 !~ /^#/ {print $0}' "$file"
+}
+
+discover_bases_recursively() {
+  # Args: paths...
+  if (( $# == 0 )); then set -- "."; fi
+  # Find .zero-clone directories and print their parent directories (unique)
+  # Using printf to handle spaces via NUL separator
+  find "$@" -type d -name .zero-clone -print0 2>/dev/null | while IFS= read -r -d '' zdir; do
+    dirname "$zdir"
+  done | sort -u
+}
+
+sanitize() {
+  # Make a filesystem-safe token for log filenames
+  echo "$1" | tr '/:@\\' '____' | tr -cs '[:alnum:]_.-' '_'
+}
+
+derive_dest_from_src() {
+  local src="$1"
+  # Strip trailing slash
+  src=${src%/}
+  # Remove remote prefix up to first ':' if present, then take basename
+  local path="$src"
+  if [[ "$src" == *:* ]]; then
+    path="${src#*:}"
+  fi
+  basename "$path"
+}
+
+parse_list_file() {
+  # Args: list_file
+  # Output: lines of "SRC\tDEST"
+  local list_file="$1"
+  if [[ ! -f "$list_file" ]]; then
+    err "Missing list file: $list_file"
+    return 1
+  fi
+  # Read lines: SRC [DEST]
+  awk 'BEGIN{OFS="\t"} NF && $1 !~ /^#/ {src=$1; if (NF>=2){dest=$2}else{dest=""}; print src,dest}' "$list_file"
+}
+
+confirm() {
+  local prompt="$1"; shift
+  if [[ "$CONFIRM" == "no" ]]; then
+    return 0
+  fi
+  read -r -p "$prompt [y/N]: " ans
+  case "$ans" in
+    y|Y|yes|YES) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+run_jobs_with_limit() {
+  # Args: max_jobs, commands... (each command is a full line to eval)
+  local max_jobs="$1"; shift
+  local pids=()
+  local running=0
+  local -i failures=0
+
+  run_cmd() {
+    bash -c "$1" || return 1
+    return 0
+  }
+
+  for cmd in "$@"; do
+    run_cmd "$cmd" &
+    pids+=("$!")
+    running=$((running+1))
+    if (( running >= max_jobs )); then
+      if wait -n 2>/dev/null; then :; else
+        # Fallback for shells without wait -n
+        wait "${pids[0]}" || failures=$((failures+1))
+        pids=("${pids[@]:1}")
+      fi
+      running=$((running-1))
+    fi
+  done
+
+  # Wait for remaining
+  for pid in "${pids[@]}"; do
+    if ! wait "$pid"; then failures=$((failures+1)); fi
+  done
+
+  return "$failures"
+}
+
+build_job_cmd() {
+  local base="$1" src="$2" dest_rel="$3" config_path="$4" logs_dir="$5" rclone_opts="$6"
+  local dest_abs="$base/clone/$dest_rel"
+  mkdir -p "$dest_abs" "$logs_dir"
+  local ts
+  ts=$(date +%Y%m%d_%H%M%S)
+  local log_name="${ts}_$(sanitize "$dest_rel")_$(sanitize "$src").log"
+  local log_file="$logs_dir/$log_name"
+  # Build rclone command
+  local cmd=(rclone sync "$src" "$dest_abs" --config "$config_path" --log-file "$log_file" --log-level INFO)
+  if [[ -n "$PROGRESS" ]]; then cmd+=("$PROGRESS"); fi
+  if [[ -n "$DRY_RUN" ]]; then cmd+=("$DRY_RUN"); fi
+  if [[ -n "$rclone_opts" ]]; then
+    # shellcheck disable=SC2206
+    extra=( $rclone_opts )
+    cmd+=("${extra[@]}")
+  fi
+  printf '%q ' "${cmd[@]}"
+}
+
+collect_bases() {
+  local bases=()
+  if [[ -n "$FROM_FILE" ]]; then
+    mapfile -t bases < <(read_dirs_from_file "$FROM_FILE") || true
+  elif [[ -f "zero-clone.txt" ]]; then
+    mapfile -t bases < <(read_dirs_from_file "zero-clone.txt") || true
+  else
+    mapfile -t bases < <(discover_bases_recursively "$@") || true
+  fi
+  # Validate base has .zero-clone
+  local valid=()
+  for b in "${bases[@]}"; do
+    if [[ -d "$b/.zero-clone" ]]; then
+      valid+=("$b")
+    fi
+  done
+  printf '%s\n' "${valid[@]}"
+}
+
+main() {
+  local -a search_paths=("$@")
+  mapfile -t BASES < <(collect_bases "${search_paths[@]}")
+  if (( ${#BASES[@]} == 0 )); then
+    err "No .zero-clone directories found."
+    exit 1
+  fi
+
+  # Build job list and summary
+  declare -a JOB_CMDS
+  declare -a JOB_LABELS
+  declare -a JOB_BASE_INDEX
+  declare -a BASE_SUMMARY
+
+  local total_jobs=0
+  for i in "${!BASES[@]}"; do
+    local base="${BASES[$i]}"
+    local zdir="$base/.zero-clone"
+    local list_file="$zdir/list.txt"
+    local config_path="$zdir/rclone.conf"
+    local logs_dir="$zdir/logs"
+    local jobs="$DEFAULT_JOBS"
+    local rclone_opts=""
+    if [[ -f "$zdir/env.sh" ]]; then
+      # shellcheck source=/dev/null
+      source "$zdir/env.sh"
+      jobs="${JOBS:-$jobs}"
+      rclone_opts="${RCLONE_OPTS:-}"
+    fi
+    if [[ ! -f "$config_path" ]]; then
+      err "Missing rclone config: $config_path"
+      continue
+    fi
+    mapfile -t rows < <(parse_list_file "$list_file") || { err "Skipping $base due to list parse error"; continue; }
+    local count=0
+    for row in "${rows[@]}"; do
+      local src dest
+      src="${row%%$'\t'*}"; dest="${row#*$'\t'}"
+      if [[ -z "$dest" || "$dest" == "$row" ]]; then
+        dest="$(derive_dest_from_src "$src")"
+      fi
+      local cmd
+      cmd="$(build_job_cmd "$base" "$src" "$dest" "$config_path" "$logs_dir" "$rclone_opts")"
+      JOB_CMDS+=("$cmd")
+      JOB_LABELS+=("$base :: $src -> clone/$dest")
+      JOB_BASE_INDEX+=("$i")
+      count=$((count+1))
+      total_jobs=$((total_jobs+1))
+    done
+    BASE_SUMMARY+=("$jobs")
+  done
+
+  if (( total_jobs == 0 )); then
+    err "No sync jobs constructed. Nothing to do."
+    exit 1
+  fi
+
+  # Show summary
+  log "Found ${#BASES[@]} .zero-clone base(s); building $total_jobs job(s)."
+  for i in "${!BASES[@]}"; do
+    local base="${BASES[$i]}"
+    local jobs_for_base="${BASE_SUMMARY[$i]}"
+    local per_base_jobs=0
+    for idx in "${!JOB_BASE_INDEX[@]}"; do
+      if [[ "${JOB_BASE_INDEX[$idx]}" == "$i" ]]; then per_base_jobs=$((per_base_jobs+1)); fi
+    done
+    log "- $base (jobs=$per_base_jobs, parallel=$jobs_for_base)"
+  done
+
+  if ! confirm "Proceed with rclone syncs?"; then
+    log "Aborted by user."
+    exit 130
+  fi
+
+  # Execute jobs per base with per-base parallelism
+  local -i global_failures=0
+  for i in "${!BASES[@]}"; do
+    local base="${BASES[$i]}"
+    local jobs_limit="${BASE_SUMMARY[$i]}"
+    # Collect this base's commands
+    local cmds=()
+    for idx in "${!JOB_BASE_INDEX[@]}"; do
+      if [[ "${JOB_BASE_INDEX[$idx]}" == "$i" ]]; then
+        cmds+=("${JOB_CMDS[$idx]}")
+      fi
+    done
+    log "Running ${#cmds[@]} job(s) for base: $base (parallel=$jobs_limit)"
+    if (( ${#cmds[@]} > 0 )); then
+      if ! run_jobs_with_limit "$jobs_limit" "${cmds[@]}"; then
+        global_failures=$((global_failures+$?))
+      fi
+    fi
+  done
+
+  if (( global_failures > 0 )); then
+    err "$global_failures job(s) failed. See per-job logs under .zero-clone/logs."
+    exit 1
+  fi
+
+  log "All sync jobs completed successfully."
+}
+
+main "$@"
+
