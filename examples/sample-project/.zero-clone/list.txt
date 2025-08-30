@@ -1,7 +1,6 @@
 ## Example list of rclone sync sources. Format: SRC [DEST]
 ## Lines starting with # are comments; blank lines are ignored.
 
-# Examples (uncomment and adjust):
-# myremote:projects/repo1 repos/repo1
-# myremote:datasets/cats
-
+## Example jobs (local paths or remotes). For tests we rewrite this file.
+# /absolute/path/to/src/alpha a
+# /absolute/path/to/src/beta

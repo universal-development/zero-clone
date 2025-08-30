@@ -51,6 +51,14 @@ Logs
 Examples
 - See `examples/sample-project/` for a minimal layout with placeholder files.
 
+**Testing**
+- Run all tests: `bash test/run.sh`
+- Requires `rclone` installed from your OS package manager and available in PATH.
+- Tests use local filesystem paths (no network) by copying `examples/sample-project` to a temp dir, generating local sources, and verifying:
+  - discovery, confirmation bypass, logging, and per-base concurrency wiring
+  - creation of per-job logs in `<base>/.zero-clone/logs/`
+  - local file sync results under `<base>/clone/`
+
 Notes
 - rclone is executed with `--config <base>/.zero-clone/rclone.conf` so each base can have isolated configs, remotes, and keys.
 - The script groups jobs per base and applies the per-base `JOBS` limit concurrently.
