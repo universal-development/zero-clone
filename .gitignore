@@ -1,1 +1,4 @@
 .idea
+clone
+examples/local-to-local/.zero-clone/list.txt
+examples/local-to-local/.zero-clone/logs/
