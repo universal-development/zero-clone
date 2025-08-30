@@ -63,3 +63,6 @@ Examples
 Notes
 - rclone is executed with `--config <base>/.zero-clone/rclone.conf` so each base can have isolated configs, remotes, and keys.
 - The script groups jobs per base and applies the per-base `JOBS` limit concurrently.
+
+**License**
+- MIT License. See `LICENSE` file for details.
