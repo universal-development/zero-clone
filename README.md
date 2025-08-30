@@ -49,7 +49,8 @@ Logs
 - On failures, the script exits non-zero and points to the relevant log files.
 
 Examples
-- See `examples/sample-project/` for a minimal layout with placeholder files.
+- `examples/sample-project/`: minimal layout with placeholder files.
+- `examples/local-to-local/`: end-to-end local-to-local sync with a runnable `run.sh`.
 
 **Testing**
 - Run all tests: `bash test/run.sh`
