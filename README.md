@@ -21,6 +21,7 @@ CLI usage
   - `-y, --yes`: skip confirmation prompt
   - `-j, --jobs N`: default parallel jobs when env.sh doesn’t set JOBS
   - `--from-file FILE`: file listing base directories to process (falls back to `zero-clone.txt` if present)
+  - `--dest DIR`: override destination root for all bases (data lake mode); syncs to `DIR/<dest>` instead of `<base>/clone/<dest>`
   - `--dry-run`: pass `--dry-run` to rclone
   - `--no-progress`: hide rclone progress
   - `--version`, `-h/--help`
@@ -43,14 +44,28 @@ env.sh (optional)
 - Sourced before running jobs for the base; you may export:
   - `JOBS`: number of parallel rclone sync processes (default 2, or `--jobs` CLI)
   - `RCLONE_OPTS`: extra flags passed to rclone (e.g., `"--checksum --transfers 8"`)
+  - `CLONE_DIR`: override destination root for this base (e.g., `/data/shared-lake`)
 
 Logs
 - Per-job logs are written to `<base>/.zero-clone/logs/<timestamp>_<dest>_<src>.log`.
 - On failures, the script exits non-zero and points to the relevant log files.
 
+Data Lake mode
+- Use `--dest /path/to/lake` to direct all syncs into a single directory.
+- Or set `CLONE_DIR=/path/to/lake` in a base's `env.sh` for per-base override.
+- Priority: `--dest` flag > `CLONE_DIR` in env.sh > default `<base>/clone/`.
+- Put all your remotes in one `rclone.conf` and list sources in one `list.txt`:
+  ```
+  server-a:data/users     users
+  server-b:data/products  products
+  s3:bucket/analytics     analytics
+  ```
+  Then run: `zero-clone --dest /data/lake .`
+
 Examples
 - `examples/sample-project/`: minimal layout with placeholder files.
 - `examples/local-to-local/`: end-to-end local-to-local sync with a runnable `run.sh`.
+- `examples/data-lake/`: data lake pattern with multiple sources syncing into one shared directory.
 
 **Testing**
 - Run all tests: `bash test/run.sh`

@@ -64,6 +64,48 @@ EOF
   [[ -f "$base/clone/beta/file2.txt" ]] && ok "beta synced" || fail "beta not synced"
 }
 
+test_dest_flag() {
+  local base
+  base=$(with_tmp_sample)
+  local lake
+  lake="$(mktemp -d)"
+  mkdir -p "$base/src/alpha"
+  echo "lake-data" >"$base/src/alpha/file1.txt"
+  cat >"$base/.zero-clone/list.txt" <<EOF
+$base/src/alpha a
+EOF
+  set +e
+  local rc out
+  out=$(run_zero_clone --yes --dest "$lake" "$base" 2>&1)
+  rc=$?
+  set -e
+  assert_eq "$rc" 0 "dest flag exit 0"
+  [[ -f "$lake/a/file1.txt" ]] && ok "file synced to lake dir" || fail "file not in lake dir"
+  [[ ! -d "$base/clone" ]] && ok "base/clone not created with --dest" || fail "base/clone should not exist with --dest"
+}
+
+test_multi_source_data_lake() {
+  local base
+  base=$(with_tmp_sample)
+  local lake
+  lake="$(mktemp -d)"
+  mkdir -p "$base/src/alpha" "$base/src/beta"
+  echo "from-alpha" >"$base/src/alpha/file1.txt"
+  echo "from-beta" >"$base/src/beta/file2.txt"
+  cat >"$base/.zero-clone/list.txt" <<EOF
+$base/src/alpha data/alpha
+$base/src/beta data/beta
+EOF
+  set +e
+  local rc out
+  out=$(run_zero_clone --yes --dest "$lake" "$base" 2>&1)
+  rc=$?
+  set -e
+  assert_eq "$rc" 0 "multi-source lake exit 0"
+  [[ -f "$lake/data/alpha/file1.txt" ]] && ok "alpha synced to lake" || fail "alpha not in lake"
+  [[ -f "$lake/data/beta/file2.txt" ]] && ok "beta synced to lake" || fail "beta not in lake"
+}
+
 main() {
   # Ensure mock is executable
   chmod +x "$ROOT_DIR/bin/zero-clone" || true
@@ -72,6 +114,8 @@ main() {
   test_no_bases_found
   if command -v rclone >/dev/null 2>&1; then
     test_runs_with_os_rclone
+    test_dest_flag
+    test_multi_source_data_lake
   else
     ok "rclone not found; skipping OS rclone tests"
   fi

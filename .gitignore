@@ -2,3 +2,6 @@
 clone
 examples/local-to-local/.zero-clone/list.txt
 examples/local-to-local/.zero-clone/logs/
+examples/data-lake/.zero-clone/list.txt
+examples/data-lake/.zero-clone/logs/
+examples/data-lake/lake/

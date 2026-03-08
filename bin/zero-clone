@@ -17,6 +17,7 @@ Options:
   -y, --yes              Skip confirmation prompt
   -j, --jobs N           Default parallel jobs (overridden by per-dir env.sh)
       --from-file FILE   File with base directories to process (default: zero-clone.txt if present)
+      --dest DIR         Override destination root (data lake mode); syncs to DIR/<dest> instead of <base>/clone/<dest>
       --dry-run          Pass --dry-run to rclone
       --no-progress      Do not show rclone progress
       --version          Print version and exit
@@ -30,7 +31,7 @@ Per-directory layout:
   <base>/clone/                  # destination root for synced files
   <base>/.zero-clone/rclone.conf # rclone config used for that base
   <base>/.zero-clone/list.txt    # list of sync items: "SRC [DEST]"
-  <base>/.zero-clone/env.sh      # optional, exports env like JOBS, RCLONE_OPTS
+  <base>/.zero-clone/env.sh      # optional, exports JOBS, RCLONE_OPTS, CLONE_DIR
   <base>/.zero-clone/logs/       # logs per sync run
 
 list.txt format:
@@ -45,6 +46,7 @@ Examples:
   zero-clone ~/Projects           # scan a path recursively
   zero-clone --from-file repos.txt
   zero-clone --yes --jobs 4 ~/data
+  zero-clone --dest /data/lake ~/configs  # data lake: all syncs into /data/lake
 USAGE
 }
 
@@ -57,6 +59,7 @@ DEFAULT_JOBS=${JOBS:-2}
 FROM_FILE=""
 DRY_RUN=""
 PROGRESS="--progress"
+DEST_OVERRIDE=""
 
 while (( $# > 0 )); do
   case "$1" in
@@ -65,6 +68,7 @@ while (( $# > 0 )); do
     --from-file) FROM_FILE="$2"; shift 2 ;;
     --dry-run) DRY_RUN="--dry-run"; shift ;;
     --no-progress) PROGRESS=""; shift ;;
+    --dest) DEST_OVERRIDE="$2"; shift 2 ;;
     --version) echo "$VERSION"; exit 0 ;;
     -h|--help) print_usage; exit 0 ;;
     --) shift; break ;;
@@ -72,6 +76,11 @@ while (( $# > 0 )); do
     *) break ;;
   esac
 done
+
+if [[ -n "$DEST_OVERRIDE" ]]; then
+  mkdir -p "$DEST_OVERRIDE"
+  DEST_OVERRIDE="$(cd "$DEST_OVERRIDE" && pwd)"
+fi
 
 if ! command -v rclone >/dev/null 2>&1; then
   err "rclone not found in PATH. Please install rclone."
@@ -170,8 +179,8 @@ run_jobs_with_limit() {
 }
 
 build_job_cmd() {
-  local base="$1" src="$2" dest_rel="$3" config_path="$4" logs_dir="$5" rclone_opts="$6"
-  local dest_abs="$base/clone/$dest_rel"
+  local base="$1" src="$2" dest_rel="$3" config_path="$4" logs_dir="$5" rclone_opts="$6" dest_root="$7"
+  local dest_abs="$dest_root/$dest_rel"
   mkdir -p "$dest_abs" "$logs_dir"
   local ts
   ts=$(date +%Y%m%d_%H%M%S)
@@ -237,6 +246,20 @@ main() {
       jobs="${JOBS:-$jobs}"
       rclone_opts="${RCLONE_OPTS:-}"
     fi
+    # Resolve dest root: CLI --dest > env.sh CLONE_DIR > default
+    local dest_root
+    if [[ -n "$DEST_OVERRIDE" ]]; then
+      dest_root="$DEST_OVERRIDE"
+    elif [[ -n "${CLONE_DIR:-}" ]]; then
+      dest_root="$CLONE_DIR"
+      if [[ "$dest_root" != /* ]]; then
+        mkdir -p "$base/$dest_root"
+        dest_root="$(cd "$base/$dest_root" && pwd)"
+      fi
+    else
+      dest_root="$base/clone"
+    fi
+    unset JOBS RCLONE_OPTS CLONE_DIR 2>/dev/null || true
     if [[ ! -f "$config_path" ]]; then
       err "Missing rclone config: $config_path"
       continue
@@ -250,9 +273,9 @@ main() {
         dest="$(derive_dest_from_src "$src")"
       fi
       local cmd
-      cmd="$(build_job_cmd "$base" "$src" "$dest" "$config_path" "$logs_dir" "$rclone_opts")"
+      cmd="$(build_job_cmd "$base" "$src" "$dest" "$config_path" "$logs_dir" "$rclone_opts" "$dest_root")"
       JOB_CMDS+=("$cmd")
-      JOB_LABELS+=("$base :: $src -> clone/$dest")
+      JOB_LABELS+=("$base :: $src -> $dest_root/$dest")
       JOB_BASE_INDEX+=("$i")
       count=$((count+1))
       total_jobs=$((total_jobs+1))
