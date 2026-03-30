@@ -9,6 +9,10 @@ Directory convention (per base directory)
 - .zero-clone/env.sh: optional environment overrides (e.g., JOBS, RCLONE_OPTS, CLONE_DIR)
 - .zero-clone/logs/: per-job rclone logs
 
+Project-level (current working directory)
+- init.sh: optional, sourced before CLI argument processing; use it to set `ZERO_CLONE_DIR` and other global defaults
+- zero-clone.txt: optional list of base directories to process (used when no `--from-file` is given)
+
 Quick start
 - Install rclone and ensure it’s in PATH.
 - Create a base directory and add the structure above.
@@ -73,7 +77,7 @@ Data Lake mode
   Then run: `zero-clone --dest /data/lake .`
 
 Examples
-- `examples/sample-project/`: minimal layout with placeholder files.
+- `examples/sample-project/`: minimal layout with placeholder files and an example `init.sh`.
 - `examples/local-to-local/`: end-to-end local-to-local sync with a runnable `run.sh`.
 - `examples/data-lake/`: data lake pattern with multiple sources syncing into one shared directory.
 
@@ -83,7 +87,9 @@ Examples
 - Tests use local filesystem paths (no network) by copying `examples/sample-project` to a temp dir, generating local sources, and verifying:
   - discovery, confirmation bypass, logging, and per-base concurrency wiring
   - creation of per-job logs in `<base>/.zero-clone/logs/`
-  - local file sync results under `<base>/clone/`
+  - local file sync results under `<base>/clone/` (default), a custom dir via `--clone-dir`, and a data lake dir via `--dest`
+  - `ZERO_CLONE_DIR` env variable overrides the default clone directory name
+  - `init.sh` in the working directory is sourced and its `ZERO_CLONE_DIR` export is respected
 
 Notes
 - rclone is executed with `--config <base>/.zero-clone/rclone.conf` so each base can have isolated configs, remotes, and keys.
