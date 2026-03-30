@@ -8,3 +8,8 @@ export JOBS=2
 # Example: enable checksums and set transfers
 # export RCLONE_OPTS="--checksum --transfers 8"
 
+# Override the destination root for this specific base only.
+# Use an absolute path for a shared data lake, or a relative name to stay under <base>/.
+# For a project-wide default, set ZERO_CLONE_DIR in init.sh instead.
+# export CLONE_DIR=/data/shared-lake
+

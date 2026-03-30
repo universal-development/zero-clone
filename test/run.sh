@@ -64,6 +64,65 @@ EOF
   [[ -f "$base/clone/beta/file2.txt" ]] && ok "beta synced" || fail "beta not synced"
 }
 
+test_zero_clone_dir_env() {
+  local base
+  base=$(with_tmp_sample)
+  mkdir -p "$base/src/alpha"
+  echo "env-var-data" >"$base/src/alpha/file1.txt"
+  cat >"$base/.zero-clone/list.txt" <<EOF
+$base/src/alpha a
+EOF
+  set +e
+  local rc out
+  out=$(ZERO_CLONE_DIR=envdata run_zero_clone --yes "$base" 2>&1)
+  rc=$?
+  set -e
+  assert_eq "$rc" 0 "ZERO_CLONE_DIR env exit 0"
+  [[ -f "$base/envdata/a/file1.txt" ]] && ok "file synced via ZERO_CLONE_DIR env var" || fail "file not in ZERO_CLONE_DIR dir"
+  [[ ! -d "$base/clone" ]] && ok "base/clone not created with ZERO_CLONE_DIR" || fail "base/clone should not exist with ZERO_CLONE_DIR"
+}
+
+test_init_sh() {
+  local base
+  base=$(with_tmp_sample)
+  mkdir -p "$base/src/alpha"
+  echo "init-sh-data" >"$base/src/alpha/file1.txt"
+  cat >"$base/.zero-clone/list.txt" <<EOF
+$base/src/alpha a
+EOF
+  local workdir
+  workdir="$(mktemp -d)"
+  cat >"$workdir/init.sh" <<'EOF'
+export ZERO_CLONE_DIR=mydata
+EOF
+  set +e
+  local rc out
+  out=$(cd "$workdir" && bash "$ROOT_DIR/bin/zero-clone" --yes "$base" 2>&1)
+  rc=$?
+  set -e
+  assert_eq "$rc" 0 "init.sh exit 0"
+  [[ -f "$base/mydata/a/file1.txt" ]] && ok "file synced via init.sh ZERO_CLONE_DIR" || fail "file not in init.sh ZERO_CLONE_DIR dir"
+  [[ ! -d "$base/clone" ]] && ok "base/clone not created with init.sh" || fail "base/clone should not exist with init.sh"
+}
+
+test_clone_dir_flag() {
+  local base
+  base=$(with_tmp_sample)
+  mkdir -p "$base/src/alpha"
+  echo "clone-dir-data" >"$base/src/alpha/file1.txt"
+  cat >"$base/.zero-clone/list.txt" <<EOF
+$base/src/alpha a
+EOF
+  set +e
+  local rc out
+  out=$(run_zero_clone --yes --clone-dir data "$base" 2>&1)
+  rc=$?
+  set -e
+  assert_eq "$rc" 0 "clone-dir flag exit 0"
+  [[ -f "$base/data/a/file1.txt" ]] && ok "file synced to custom clone dir" || fail "file not in custom clone dir"
+  [[ ! -d "$base/clone" ]] && ok "base/clone not created with --clone-dir" || fail "base/clone should not exist with --clone-dir"
+}
+
 test_dest_flag() {
   local base
   base=$(with_tmp_sample)
@@ -114,6 +173,9 @@ main() {
   test_no_bases_found
   if command -v rclone >/dev/null 2>&1; then
     test_runs_with_os_rclone
+    test_zero_clone_dir_env
+    test_init_sh
+    test_clone_dir_flag
     test_dest_flag
     test_multi_source_data_lake
   else
