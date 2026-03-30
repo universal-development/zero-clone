@@ -17,7 +17,8 @@ Options:
   -y, --yes              Skip confirmation prompt
   -j, --jobs N           Default parallel jobs (overridden by per-dir env.sh)
       --from-file FILE   File with base directories to process (default: zero-clone.txt if present)
-      --dest DIR         Override destination root (data lake mode); syncs to DIR/<dest> instead of <base>/clone/<dest>
+      --clone-dir NAME   Directory name to use as destination root within each base (default: clone)
+      --dest DIR         Override destination root (data lake mode); syncs to DIR/<dest> instead of <base>/<clone-dir>/<dest>
       --dry-run          Pass --dry-run to rclone
       --no-progress      Do not show rclone progress
       --version          Print version and exit
@@ -28,7 +29,7 @@ Arguments:
                          Defaults to current directory when not using --from-file.
 
 Per-directory layout:
-  <base>/clone/                  # destination root for synced files
+  <base>/<clone-dir>/                # destination root for synced files (default: clone)
   <base>/.zero-clone/rclone.conf # rclone config used for that base
   <base>/.zero-clone/list.txt    # list of sync items: "SRC [DEST]"
   <base>/.zero-clone/env.sh      # optional, exports JOBS, RCLONE_OPTS, CLONE_DIR
@@ -38,14 +39,15 @@ list.txt format:
   - Each non-empty, non-comment line defines a sync job.
   - Columns: SRC [DEST]
       * SRC: rclone source (e.g., remote:path or URL)
-      * DEST: optional relative path under <base>/clone/
+      * DEST: optional relative path under <base>/<clone-dir>/
         If omitted, DEST is derived from SRC path's basename.
 
 Examples:
-  zero-clone                      # scan current directory recursively
-  zero-clone ~/Projects           # scan a path recursively
+  zero-clone                         # scan current directory recursively
+  zero-clone ~/Projects              # scan a path recursively
   zero-clone --from-file repos.txt
   zero-clone --yes --jobs 4 ~/data
+  zero-clone --clone-dir data ~/projects  # use data/ instead of clone/
   zero-clone --dest /data/lake ~/configs  # data lake: all syncs into /data/lake
 USAGE
 }
@@ -60,12 +62,14 @@ FROM_FILE=""
 DRY_RUN=""
 PROGRESS="--progress"
 DEST_OVERRIDE=""
+CLONE_DIR_NAME="clone"
 
 while (( $# > 0 )); do
   case "$1" in
     -y|--yes) CONFIRM=no; shift ;;
     -j|--jobs) DEFAULT_JOBS="$2"; shift 2 ;;
     --from-file) FROM_FILE="$2"; shift 2 ;;
+    --clone-dir) CLONE_DIR_NAME="$2"; shift 2 ;;
     --dry-run) DRY_RUN="--dry-run"; shift ;;
     --no-progress) PROGRESS=""; shift ;;
     --dest) DEST_OVERRIDE="$2"; shift 2 ;;
@@ -257,7 +261,7 @@ main() {
         dest_root="$(cd "$base/$dest_root" && pwd)"
       fi
     else
-      dest_root="$base/clone"
+      dest_root="$base/$CLONE_DIR_NAME"
     fi
     unset JOBS RCLONE_OPTS CLONE_DIR 2>/dev/null || true
     if [[ ! -f "$config_path" ]]; then

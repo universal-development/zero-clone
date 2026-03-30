@@ -3,10 +3,10 @@
 Portable Bash CLI to automatically sync from remote servers to local directories using rclone, with a simple convention-based layout per project.
 
 Directory convention (per base directory)
-- clone: synchronized files go here
+- clone (or the name set by `--clone-dir`): synchronized files go here
 - .zero-clone/rclone.conf: rclone configuration used for that base
 - .zero-clone/list.txt: sources to sync, one per line
-- .zero-clone/env.sh: optional environment overrides (e.g., JOBS, RCLONE_OPTS)
+- .zero-clone/env.sh: optional environment overrides (e.g., JOBS, RCLONE_OPTS, CLONE_DIR)
 - .zero-clone/logs/: per-job rclone logs
 
 Quick start
@@ -21,7 +21,8 @@ CLI usage
   - `-y, --yes`: skip confirmation prompt
   - `-j, --jobs N`: default parallel jobs when env.sh doesn’t set JOBS
   - `--from-file FILE`: file listing base directories to process (falls back to `zero-clone.txt` if present)
-  - `--dest DIR`: override destination root for all bases (data lake mode); syncs to `DIR/<dest>` instead of `<base>/clone/<dest>`
+  - `--clone-dir NAME`: directory name to use as destination root within each base (default: `clone`). For example, `--clone-dir data` syncs into `<base>/data/<dest>` instead of `<base>/clone/<dest>`.
+  - `--dest DIR`: override destination root for all bases (data lake mode); syncs to `DIR/<dest>` instead of `<base>/<clone-dir>/<dest>`
   - `--dry-run`: pass `--dry-run` to rclone
   - `--no-progress`: hide rclone progress
   - `--version`, `-h/--help`
@@ -35,10 +36,10 @@ Discovery of bases (.zero-clone)
 list.txt format
 - One job per non-empty, non-comment line: `SRC [DEST]`
   - `SRC`: rclone source (e.g., `remote:path/to/data` or a URL supported by rclone)
-  - `DEST` (optional): relative path under `clone/`. If omitted, it is derived from `basename(SRC path)`.
+  - `DEST` (optional): relative path under the clone directory. If omitted, it is derived from `basename(SRC path)`.
 - Examples:
-  - `myremote:projects/repo         repos/repo` → syncs to `clone/repos/repo`
-  - `myremote:datasets/cats` → syncs to `clone/cats`
+  - `myremote:projects/repo         repos/repo` → syncs to `<clone-dir>/repos/repo`
+  - `myremote:datasets/cats` → syncs to `<clone-dir>/cats`
 
 env.sh (optional)
 - Sourced before running jobs for the base; you may export:
@@ -53,7 +54,7 @@ Logs
 Data Lake mode
 - Use `--dest /path/to/lake` to direct all syncs into a single directory.
 - Or set `CLONE_DIR=/path/to/lake` in a base's `env.sh` for per-base override.
-- Priority: `--dest` flag > `CLONE_DIR` in env.sh > default `<base>/clone/`.
+- Priority: `--dest` flag > `CLONE_DIR` in env.sh > `--clone-dir` name (default: `clone`) relative to each base.
 - Put all your remotes in one `rclone.conf` and list sources in one `list.txt`:
   ```
   server-a:data/users     users
