@@ -17,7 +17,8 @@ Options:
   -y, --yes              Skip confirmation prompt
   -j, --jobs N           Default parallel jobs (overridden by per-dir env.sh)
       --from-file FILE   File with base directories to process (default: zero-clone.txt if present)
-      --clone-dir NAME   Directory name to use as destination root within each base (default: clone)
+      --clone-dir NAME   Directory name to use as destination root within each base (default: clone,
+                         or the value of ZERO_CLONE_DIR environment variable)
       --dest DIR         Override destination root (data lake mode); syncs to DIR/<dest> instead of <base>/<clone-dir>/<dest>
       --dry-run          Pass --dry-run to rclone
       --no-progress      Do not show rclone progress
@@ -49,20 +50,34 @@ Examples:
   zero-clone --yes --jobs 4 ~/data
   zero-clone --clone-dir data ~/projects  # use data/ instead of clone/
   zero-clone --dest /data/lake ~/configs  # data lake: all syncs into /data/lake
+  ZERO_CLONE_DIR=data zero-clone ~/projects  # same as --clone-dir via env var
+
+Global init:
+  If a file named init.sh exists in the current working directory it is sourced
+  before argument processing. Use it to export ZERO_CLONE_DIR (and other
+  environment variables) as project-wide defaults.
+  Example init.sh:
+    export ZERO_CLONE_DIR=data
 USAGE
 }
 
 log() { printf "%s\n" "$*"; }
 err() { printf "[ERROR] %s\n" "$*" >&2; }
 
-# Globals set by CLI
+# Source project-level init.sh from CWD if present (allows setting ZERO_CLONE_DIR, etc.)
+if [[ -f "init.sh" ]]; then
+  # shellcheck source=/dev/null
+  source "init.sh"
+fi
+
+# Globals set by CLI (ZERO_CLONE_DIR env var provides the default clone directory name)
 CONFIRM=yes
 DEFAULT_JOBS=${JOBS:-2}
 FROM_FILE=""
 DRY_RUN=""
 PROGRESS="--progress"
 DEST_OVERRIDE=""
-CLONE_DIR_NAME="clone"
+CLONE_DIR_NAME="${ZERO_CLONE_DIR:-clone}"
 
 while (( $# > 0 )); do
   case "$1" in
